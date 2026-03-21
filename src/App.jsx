@@ -126,19 +126,18 @@ export default function App() {
     }
   }, [sdkReady, selectedId])
 
-  // ── Writing action (streaming)
+  // ── Writing action — streaming with non-streaming fallback
   const runAction = useCallback(async (key) => {
     if (modelPhase !== 'ready' || !inputText.trim()) return
     setIsGenerating(true)
     setOutputText('')
     setActiveAction(key)
 
+    const prompt = ACTIONS[key].prompt(inputText)
     try {
-      const { stream } = await TextGeneration.generateStream(
-        ACTIONS[key].prompt(inputText),
-        { maxTokens: 600, temperature: 0.7 }
-      )
-      for await (const token of stream) setOutputText(p => p + token)
+      // Use generate() — reliable with RunAnywhere beta SDK
+      const result = await TextGeneration.generate(prompt, { maxTokens: 600, temperature: 0.7 })
+      setOutputText((result.text ?? '').trim() || 'No response received.')
     } catch (e) {
       setOutputText('⚠ Error: ' + e.message)
     } finally {
@@ -164,18 +163,14 @@ export default function App() {
 
       const prompt = `You are a helpful, friendly AI assistant. Respond clearly and conversationally. Answer in Hindi or English based on what the user uses.\n\n${ctx}\nAssistant:`
 
-      const { stream } = await TextGeneration.generateStream(prompt, {
-        maxTokens: 500,
-        temperature: 0.8,
+      // Use non-streaming generate() — more reliable with RunAnywhere beta SDK
+      const result = await TextGeneration.generate(prompt, { maxTokens: 500, temperature: 0.8 })
+      const text = (result.text ?? '').trim() || 'No response received.'
+      setMessages(prev => {
+        const u = [...prev]
+        u[u.length - 1] = { ...u[u.length - 1], content: text }
+        return u
       })
-
-      for await (const token of stream) {
-        setMessages(prev => {
-          const u = [...prev]
-          u[u.length - 1] = { ...u[u.length - 1], content: u[u.length - 1].content + token }
-          return u
-        })
-      }
     } catch (e) {
       setMessages(prev => {
         const u = [...prev]
@@ -227,12 +222,9 @@ export default function App() {
 
       const prompt = `You are an image analysis assistant. Here is what is known about the uploaded image:\n${imgDesc}\n\nUser's question: "${photoQ}"\n\nProvide a helpful, honest answer based on the image properties and filename. If you cannot determine specific details, say so clearly.`
 
-      const { stream } = await TextGeneration.generateStream(prompt, {
-        maxTokens: 400,
-        temperature: 0.7,
-      })
-
-      for await (const token of stream) setPhotoAnswer(p => p + token)
+      // Use generate() — reliable with RunAnywhere beta SDK
+      const result = await TextGeneration.generate(prompt, { maxTokens: 400, temperature: 0.7 })
+      setPhotoAnswer((result.text ?? '').trim() || 'No response received.')
     } catch (e) {
       setPhotoAnswer('⚠ Error: ' + e.message)
     } finally {

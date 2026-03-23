@@ -194,3 +194,4 @@ DevTools → Network tab → Model load ke baad koi bhi feature use karo.
 ---
 
 *Built for hackathon · RunAnywhere Web SDK · 100% browser-local AI*
+"# Offline-Sathi" 

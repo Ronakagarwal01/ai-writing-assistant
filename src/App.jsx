@@ -39,6 +39,28 @@ const ACTIONS = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DRAFTER TEMPLATES
+// ─────────────────────────────────────────────────────────────────────────────
+const DRAFT_TEMPLATES = {
+  email:  { label: 'Email',          icon: '📧', prompt: (tone, brief) => `Write a ${tone} email about: ${brief}. Output only the email body, no explanations.` },
+  letter: { label: 'Business Letter', icon: '📄', prompt: (tone, brief) => `Write a ${tone} business letter about: ${brief}. Output only the letter.` },
+  essay:  { label: 'Essay',           icon: '📝', prompt: (tone, brief) => `Write a short ${tone} essay on: ${brief}. Output only the essay.` },
+  poem:   { label: 'Poem',            icon: '🎭', prompt: (tone, brief) => `Write a ${tone} poem about: ${brief}. Output only the poem.` },
+  story:  { label: 'Story',           icon: '📖', prompt: (tone, brief) => `Write a short ${tone} creative story about: ${brief}. Output only the story.` },
+  blog:   { label: 'Blog Post',       icon: '✍️', prompt: (tone, brief) => `Write a ${tone} blog post introduction about: ${brief}. Output only the blog post.` },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CODE DOC ACTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+const CODE_ACTIONS = {
+  explain:   { label: 'Explain Code',     icon: '💡', prompt: (lang, code) => `Explain what this ${lang} code does in simple terms:\n\n${code}` },
+  docstring: { label: 'Generate Docs',    icon: '📋', prompt: (lang, code) => `Generate complete JSDoc/docstring comments for this ${lang} code. Return only the documented version:\n\n${code}` },
+  bugs:      { label: 'Find Bugs',        icon: '🐛', prompt: (lang, code) => `Find potential bugs or issues in this ${lang} code and explain them briefly:\n\n${code}` },
+  refactor:  { label: 'Suggest Refactor', icon: '⚡', prompt: (lang, code) => `Suggest improvements and refactoring for this ${lang} code:\n\n${code}` },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN APP
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -76,6 +98,56 @@ export default function App() {
   const [photoLoading, setPhotoLoading]   = useState(false)
   const galleryRef = useRef(null)
   const cameraRef  = useRef(null)
+
+  // ── Notes (localStorage-backed)
+  const [notes, setNotes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ai_notes') || '[]') } catch { return [] }
+  })
+  const [activeNote, setActiveNote] = useState(null)
+  const [noteContent, setNoteContent] = useState('')
+  const [noteSummary, setNoteSummary] = useState('')
+  const [noteLoading, setNoteLoading] = useState(false)
+
+  // ── Drafter
+  const [draftTemplate, setDraftTemplate] = useState('email')
+  const [draftTone, setDraftTone] = useState('professional')
+  const [draftBrief, setDraftBrief] = useState('')
+  const [draftOutput, setDraftOutput] = useState('')
+  const [draftLoading, setDraftLoading] = useState(false)
+  const [draftCopied, setDraftCopied] = useState(false)
+
+  // ── Language Learning
+  const [langPhrase, setLangPhrase] = useState('The quick brown fox jumps over the lazy dog')
+  const [langSpoken, setLangSpoken] = useState('')
+  const [langFeedback, setLangFeedback] = useState('')
+  const [langListening, setLangListening] = useState(false)
+  const [langLoading, setLangLoading] = useState(false)
+  const langRecogRef = useRef(null)
+
+  // ── Research
+  const [researchDoc, setResearchDoc] = useState('')
+  const [researchFileName, setResearchFileName] = useState('')
+  const [researchQ, setResearchQ] = useState('')
+  const [researchAnswer, setResearchAnswer] = useState('')
+  const [researchLoading, setResearchLoading] = useState(false)
+  const researchFileRef = useRef(null)
+
+  // ── Code Docs
+  const [codeInput, setCodeInput] = useState('')
+  const [codeLang, setCodeLang] = useState('javascript')
+  const [codeOutput, setCodeOutput] = useState('')
+  const [codeAction, setCodeAction] = useState(null)
+  const [codeLoading, setCodeLoading] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
+
+  // ── Meeting
+  const [meetingTranscript, setMeetingTranscript] = useState('')
+  const [meetingSummary, setMeetingSummary] = useState('')
+  const [meetingAction, setMeetingAction] = useState(null)
+  const [meetingRecording, setMeetingRecording] = useState(false)
+  const [meetingLoading, setMeetingLoading] = useState(false)
+  const meetingRecogRef = useRef(null)
+  const meetingTranscriptRef = useRef('')
 
   // ── Init SDK on mount
   useEffect(() => {
@@ -232,6 +304,132 @@ export default function App() {
     }
   }, [modelPhase, photoFile, photoPreview, photoQ])
 
+  // ── Persist notes to localStorage
+  useEffect(() => { localStorage.setItem('ai_notes', JSON.stringify(notes)) }, [notes])
+
+  // ── Notes handlers
+  const createNote = () => {
+    const n = { id: Date.now(), title: 'New Note', content: '', created: new Date().toLocaleString() }
+    setNotes(prev => [n, ...prev]); selectNote(n)
+  }
+  const selectNote = (n) => { setActiveNote(n); setNoteContent(n.content); setNoteSummary('') }
+  const saveNote = (content) => {
+    setNoteContent(content)
+    setNotes(prev => prev.map(n => n.id === activeNote?.id
+      ? { ...n, content, title: content.split('\n')[0].slice(0, 40) || 'Untitled' } : n))
+  }
+  const deleteNote = (id) => {
+    setNotes(prev => prev.filter(n => n.id !== id))
+    if (activeNote?.id === id) { setActiveNote(null); setNoteContent(''); setNoteSummary('') }
+  }
+  const summarizeNote = useCallback(async () => {
+    if (modelPhase !== 'ready' || !noteContent.trim()) return
+    setNoteLoading(true); setNoteSummary('')
+    try {
+      const r = await TextGeneration.generate(`Summarize this note in 3 concise bullet points. Return only the bullets:\n\n${noteContent}`, { maxTokens: 300, temperature: 0.5 })
+      setNoteSummary((r.text ?? '').trim())
+    } catch (e) { setNoteSummary('⚠ Error: ' + e.message) }
+    finally { setNoteLoading(false) }
+  }, [modelPhase, noteContent])
+
+  // ── Drafter handler
+  const generateDraft = useCallback(async () => {
+    if (modelPhase !== 'ready' || !draftBrief.trim()) return
+    setDraftLoading(true); setDraftOutput('')
+    try {
+      const r = await TextGeneration.generate(DRAFT_TEMPLATES[draftTemplate].prompt(draftTone, draftBrief), { maxTokens: 700, temperature: 0.8 })
+      setDraftOutput((r.text ?? '').trim())
+    } catch (e) { setDraftOutput('⚠ Error: ' + e.message) }
+    finally { setDraftLoading(false) }
+  }, [modelPhase, draftTemplate, draftTone, draftBrief])
+
+  // ── Language Learning handlers
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { setLangFeedback('⚠ Web Speech API not supported in this browser. Try Chrome or Edge.'); return }
+    const r = new SR(); r.lang = 'en-US'; r.interimResults = false; r.maxAlternatives = 1
+    r.onresult = e => { setLangSpoken(e.results[0][0].transcript); setLangListening(false) }
+    r.onerror = () => setLangListening(false); r.onend = () => setLangListening(false)
+    langRecogRef.current = r; r.start(); setLangListening(true); setLangSpoken(''); setLangFeedback('')
+  }
+  const stopListening = () => { langRecogRef.current?.stop(); setLangListening(false) }
+  const getLangFeedback = useCallback(async () => {
+    if (modelPhase !== 'ready' || !langSpoken.trim()) return
+    setLangLoading(true); setLangFeedback('')
+    try {
+      const prompt = `A language learner was asked to say: "${langPhrase}"\nThey said: "${langSpoken}"\nGive brief, encouraging pronunciation and accuracy feedback (3-4 sentences). Compare the two and suggest improvements.`
+      const r = await TextGeneration.generate(prompt, { maxTokens: 250, temperature: 0.6 })
+      setLangFeedback((r.text ?? '').trim())
+    } catch (e) { setLangFeedback('⚠ Error: ' + e.message) }
+    finally { setLangLoading(false) }
+  }, [modelPhase, langPhrase, langSpoken])
+
+  // ── Research handlers
+  const loadResearchDoc = (e) => {
+    const file = e.target.files?.[0]; if (!file) return
+    setResearchFileName(file.name); setResearchAnswer(''); setResearchDoc('')
+    const reader = new FileReader()
+    reader.onload = ev => setResearchDoc(ev.target.result?.toString() ?? '')
+    reader.readAsText(file)
+  }
+  const askResearch = useCallback(async (action) => {
+    if (modelPhase !== 'ready' || !researchDoc.trim()) return
+    setResearchLoading(true); setResearchAnswer('')
+    const truncated = researchDoc.slice(0, 3500)
+    const prompts = {
+      summarize:  `Summarize this document in 3-4 sentences:\n\n${truncated}`,
+      keypoints:  `Extract 5 key points from this document as bullet points:\n\n${truncated}`,
+      arguments:  `List the main arguments or claims made in this document:\n\n${truncated}`,
+      qa:         `Based on this document, answer: "${researchQ}"\n\nDocument:\n${truncated}`,
+    }
+    try {
+      const r = await TextGeneration.generate(prompts[action], { maxTokens: 500, temperature: 0.6 })
+      setResearchAnswer((r.text ?? '').trim())
+    } catch (e) { setResearchAnswer('⚠ Error: ' + e.message) }
+    finally { setResearchLoading(false) }
+  }, [modelPhase, researchDoc, researchQ])
+
+  // ── Code Docs handler
+  const runCodeAction = useCallback(async (key) => {
+    if (modelPhase !== 'ready' || !codeInput.trim()) return
+    setCodeLoading(true); setCodeOutput(''); setCodeAction(key)
+    try {
+      const r = await TextGeneration.generate(CODE_ACTIONS[key].prompt(codeLang, codeInput.slice(0, 2000)), { maxTokens: 600, temperature: 0.5 })
+      setCodeOutput((r.text ?? '').trim())
+    } catch (e) { setCodeOutput('⚠ Error: ' + e.message) }
+    finally { setCodeLoading(false) }
+  }, [modelPhase, codeInput, codeLang])
+
+  // ── Meeting handlers
+  const startMeeting = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { setMeetingSummary('⚠ Web Speech API not supported. Try Chrome or Edge.'); return }
+    const r = new SR(); r.lang = 'en-US'; r.continuous = true; r.interimResults = true
+    r.onresult = e => {
+      let final = ''
+      for (let i = 0; i < e.results.length; i++) { if (e.results[i].isFinal) final += e.results[i][0].transcript + ' ' }
+      if (final) { meetingTranscriptRef.current += final; setMeetingTranscript(meetingTranscriptRef.current) }
+    }
+    r.onerror = () => setMeetingRecording(false); r.onend = () => setMeetingRecording(false)
+    meetingRecogRef.current = r; r.start(); setMeetingRecording(true)
+  }
+  const stopMeeting = () => { meetingRecogRef.current?.stop(); setMeetingRecording(false) }
+  const runMeetingAction = useCallback(async (key) => {
+    if (modelPhase !== 'ready' || !meetingTranscript.trim()) return
+    setMeetingLoading(true); setMeetingSummary(''); setMeetingAction(key)
+    const t = meetingTranscript.slice(0, 3000)
+    const prompts = {
+      summary:   `Provide a concise meeting summary from this transcript:\n\n${t}`,
+      actions:   `Extract all action items and to-dos from this meeting transcript as a numbered list:\n\n${t}`,
+      decisions: `List the key decisions made in this meeting:\n\n${t}`,
+    }
+    try {
+      const r = await TextGeneration.generate(prompts[key], { maxTokens: 400, temperature: 0.5 })
+      setMeetingSummary((r.text ?? '').trim())
+    } catch (e) { setMeetingSummary('⚠ Error: ' + e.message) }
+    finally { setMeetingLoading(false) }
+  }, [modelPhase, meetingTranscript])
+
   const copyText = () => {
     navigator.clipboard.writeText(outputText).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 2000)
@@ -245,31 +443,85 @@ export default function App() {
   return (
     <div className="app">
 
-      {/* ════════════════════════════════════════ HEADER */}
-      <header className="header">
-        <div className="header-inner">
-          <div className="header-brand">
-            <span className="brand-icon">✍️</span>
+      {/* ═══════════════════ SIDEBAR */}
+      <aside className="sidebar">
+        <div className="sidebar-top">
+          <div className="sidebar-brand">
+            <span className="sidebar-brand-icon">✍️</span>
             <div>
-              <h1 className="brand-name">AI Writing Assistant</h1>
-              <p className="brand-sub">RunAnywhere SDK · WebGPU/WASM · 100% Offline · No API Key</p>
+              <div className="sidebar-brand-name">AI Writing</div>
+              <div className="sidebar-brand-sub">Assistant</div>
             </div>
           </div>
-          <div className="header-right">
-            {!sdkReady && !sdkError && <span className="badge badge-loading">⟳ SDK Init...</span>}
-            {sdkError  && <span className="badge badge-error">✕ SDK Error</span>}
-            {sdkReady  && modelPhase !== 'ready' && <span className="badge badge-sdk">✓ RunAnywhere SDK</span>}
+
+          <nav className="sidebar-nav">
+            {[
+              { id: 'writer',   icon: '✍️',  label: 'Writing Assistant' },
+              { id: 'drafter',  icon: '📧',  label: 'AI Drafter' },
+              { id: 'notes',    icon: '🗒️',  label: 'Smart Notes' },
+              { id: 'language', icon: '🎙️', label: 'Language Learning' },
+              { id: 'research', icon: '🔬',  label: 'Research Assistant' },
+              { id: 'codedoc',  icon: '💻',  label: 'Code Docs' },
+              { id: 'meeting',  icon: '🎤',  label: 'Meeting Transcription' },
+              { id: 'chat',     icon: '💬',  label: 'AI Chat' },
+              { id: 'photo',    icon: '📷',  label: 'Photo Ask' },
+            ].map(t => (
+              <button key={t.id}
+                className={`sidebar-item ${tab === t.id ? 'sidebar-item--active' : ''}`}
+                onClick={() => setTab(t.id)}>
+                <span className="sidebar-item-icon">{t.icon}</span>
+                <span className="sidebar-item-label">{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="sidebar-bottom">
+          {!sdkReady && !sdkError && <div className="sidebar-status status-loading">⟳ Initializing SDK...</div>}
+          {sdkError  && <div className="sidebar-status status-error">✕ SDK Error</div>}
+          {sdkReady  && modelPhase !== 'ready' && <div className="sidebar-status status-sdk">✓ SDK Ready</div>}
+          {modelPhase === 'ready' && (
+            <div className="sidebar-status status-ready">
+              <span className="pulse-dot" />
+              {acceleration === 'webgpu' ? '⚡ WebGPU Active' : '✓ Model Loaded'}
+            </div>
+          )}
+          <div className="sidebar-footer-text">100% Local · No API Key</div>
+        </div>
+      </aside>
+
+      {/* ═══════════════════ CONTENT AREA */}
+      <div className="content-wrap">
+
+        {/* Top bar */}
+        <header className="topbar">
+          <div className="topbar-title">
+            {[
+              { id: 'writer',   label: 'Writing Assistant' },
+              { id: 'drafter',  label: 'AI Content Drafter' },
+              { id: 'notes',    label: 'Smart Notes' },
+              { id: 'language', label: 'Language Learning' },
+              { id: 'research', label: 'Research Assistant' },
+              { id: 'codedoc',  label: 'Code Documentation' },
+              { id: 'meeting',  label: 'Meeting Transcription' },
+              { id: 'chat',     label: 'AI Chat' },
+              { id: 'photo',    label: 'Photo Ask' },
+            ].find(t => t.id === tab)?.label ?? 'AI Writing Assistant'}
+          </div>
+          <div className="topbar-right">
+            {!sdkReady && !sdkError && <span className="topbar-badge badge-loading">⟳ SDK Init...</span>}
+            {sdkError  && <span className="topbar-badge badge-error">✕ SDK Error</span>}
+            {sdkReady  && modelPhase !== 'ready' && <span className="topbar-badge badge-sdk">RunAnywhere SDK</span>}
             {modelPhase === 'ready' && (
-              <span className="badge badge-ready">
+              <span className="topbar-badge badge-ready">
                 <span className="pulse-dot" />
-                {acceleration === 'webgpu' ? '⚡ WebGPU Active' : '✓ Offline Ready'}
+                {acceleration === 'webgpu' ? '⚡ WebGPU' : '✓ Offline'}
               </span>
             )}
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main className="main">
+        <main className="main">
 
         {/* SDK ERROR */}
         {sdkError && (
@@ -360,19 +612,6 @@ export default function App() {
           )}
         </section>
 
-        {/* ════════════════════════════════════════ TABS */}
-        <nav className="tabs">
-          {[
-            { id: 'writer', icon: '✍️', label: 'Writing Assistant' },
-            { id: 'chat',   icon: '💬', label: 'Chatbot' },
-            { id: 'photo',  icon: '📷', label: 'Photo Ask' },
-          ].map(t => (
-            <button key={t.id} className={`tab ${tab === t.id ? 'tab--active' : ''}`} onClick={() => setTab(t.id)}>
-              <span className="tab-icon">{t.icon}</span>
-              <span className="tab-label">{t.label}</span>
-            </button>
-          ))}
-        </nav>
 
         {/* ════════════════════════════════════════ TAB: WRITING ASSISTANT */}
         {tab === 'writer' && (
@@ -635,6 +874,330 @@ export default function App() {
           </section>
         )}
 
+        {/* ════════════════════════════════════════ TAB: DRAFTER */}
+        {tab === 'drafter' && (
+          <section className="card">
+            <div className="card-header">
+              <span className="card-icon">📧</span>
+              <div className="card-title-wrap">
+                <div className="card-title">AI Content Drafter</div>
+                <div className="card-sub">Generate emails, letters, essays, poems & more — 100% local AI</div>
+              </div>
+            </div>
+            <div className="drafter-grid">
+              {Object.entries(DRAFT_TEMPLATES).map(([k, t]) => (
+                <button key={k} className={`drafter-tmpl ${draftTemplate === k ? 'drafter-tmpl--active' : ''}`} onClick={() => setDraftTemplate(k)}>
+                  <span className="drafter-tmpl-icon">{t.icon}</span>
+                  <span className="drafter-tmpl-label">{t.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="drafter-tone-row">
+              <span className="drafter-tone-label">Tone:</span>
+              {['professional','casual','persuasive','creative'].map(tone => (
+                <button key={tone} className={`tone-btn ${draftTone === tone ? 'tone-btn--active' : ''}`} onClick={() => setDraftTone(tone)}>
+                  {tone.charAt(0).toUpperCase() + tone.slice(1)}
+                </button>
+              ))}
+            </div>
+            <textarea className="textarea" style={{ minHeight: '90px' }}
+              value={draftBrief} onChange={e => setDraftBrief(e.target.value)}
+              disabled={modelPhase !== 'ready'}
+              placeholder={`Describe what your ${DRAFT_TEMPLATES[draftTemplate].label.toLowerCase()} should be about...\n\nExample: "Postpone tomorrow's team meeting to next Monday due to scheduling conflict"`}
+            />
+            <button className="btn-primary" style={{ marginTop: 10 }}
+              onClick={generateDraft} disabled={modelPhase !== 'ready' || !draftBrief.trim() || draftLoading}>
+              {draftLoading ? '⟳ Drafting...' : `${DRAFT_TEMPLATES[draftTemplate].icon} Generate ${DRAFT_TEMPLATES[draftTemplate].label}`}
+            </button>
+            {(draftOutput || draftLoading) && (
+              <div className="drafter-output">
+                <div className="drafter-output-header">
+                  <span className="output-tag" style={{ background: '#f9731620', color: '#f97316' }}>
+                    {DRAFT_TEMPLATES[draftTemplate].icon} {DRAFT_TEMPLATES[draftTemplate].label} · {draftTone}
+                  </span>
+                  {draftOutput && !draftLoading && (
+                    <button className="btn-ghost" onClick={() => { navigator.clipboard.writeText(draftOutput); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 2000) }}>
+                      {draftCopied ? '✓ Copied!' : '📋 Copy'}
+                    </button>
+                  )}
+                </div>
+                {draftLoading && !draftOutput && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Drafting your {DRAFT_TEMPLATES[draftTemplate].label.toLowerCase()}...</span></div>}
+                {draftOutput && <p className="output-text" style={{ whiteSpace: 'pre-wrap' }}>{draftOutput}</p>}
+              </div>
+            )}
+            {modelPhase !== 'ready' && <p className="hint">⬆ Load a model first to enable drafting</p>}
+          </section>
+        )}
+
+        {/* ════════════════════════════════════════ TAB: NOTES */}
+        {tab === 'notes' && (
+          <section className="card notes-card">
+            <div className="card-header">
+              <span className="card-icon">🗒️</span>
+              <div className="card-title-wrap">
+                <div className="card-title">Smart Notes</div>
+                <div className="card-sub">Local notes · AI summarize · Saved in your browser · Never uploaded</div>
+              </div>
+              <button className="btn-primary" style={{ width:'auto', padding:'7px 16px', fontSize:13 }} onClick={createNote}>+ New Note</button>
+            </div>
+            <div className="notes-layout">
+              <div className="notes-sidebar">
+                {notes.length === 0 && <p className="notes-empty">No notes yet.<br/>Click + New Note to start.</p>}
+                {notes.map(n => (
+                  <div key={n.id} className={`note-item ${activeNote?.id === n.id ? 'note-item--active' : ''}`} onClick={() => selectNote(n)}>
+                    <div className="note-item-title">{n.title || 'Untitled'}</div>
+                    <div className="note-item-date">{n.created}</div>
+                    <button className="note-delete" onClick={e => { e.stopPropagation(); deleteNote(n.id) }}>✕</button>
+                  </div>
+                ))}
+              </div>
+              <div className="notes-editor">
+                {!activeNote
+                  ? <p className="notes-empty" style={{ padding:'40px 20px', textAlign:'center' }}>← Select or create a note</p>
+                  : (<>
+                    <textarea className="textarea notes-textarea"
+                      value={noteContent} onChange={e => saveNote(e.target.value)} placeholder="Start writing your note here..." />
+                    <div className="notes-actions">
+                      <button className="btn-ghost" onClick={summarizeNote} disabled={modelPhase !== 'ready' || !noteContent.trim() || noteLoading}>
+                        {noteLoading ? '⟳ Summarizing...' : '📋 AI Summarize'}
+                      </button>
+                      <span style={{ fontSize:11, color:'var(--muted)' }}>{noteContent.trim().split(/\s+/).filter(Boolean).length} words</span>
+                    </div>
+                    {noteLoading && !noteSummary && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Summarizing...</span></div>}
+                    {noteSummary && (
+                      <div className="note-summary">
+                        <div className="photo-answer-label">🤖 AI Summary</div>
+                        <p className="output-text" style={{ fontSize:13, whiteSpace:'pre-wrap' }}>{noteSummary}</p>
+                      </div>
+                    )}
+                  </>)
+                }
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ════════════════════════════════════════ TAB: LANGUAGE LEARNING */}
+        {tab === 'language' && (
+          <section className="card">
+            <div className="card-header">
+              <span className="card-icon">🎙️</span>
+              <div className="card-title-wrap">
+                <div className="card-title">Language Learning Companion</div>
+                <div className="card-sub">Practice pronunciation · Local Web Speech API · AI feedback · No data uploaded</div>
+              </div>
+            </div>
+            <div className="lang-phrase-box">
+              <div className="lang-label">📖 Phrase to Practice</div>
+              <textarea className="textarea" style={{ minHeight:70 }}
+                value={langPhrase}
+                onChange={e => { setLangPhrase(e.target.value); setLangSpoken(''); setLangFeedback('') }}
+                placeholder="Type a phrase or sentence to practice saying aloud..."
+              />
+            </div>
+            <div className="lang-controls">
+              <button className={`lang-mic-btn ${langListening ? 'lang-mic-btn--active' : ''}`}
+                onClick={langListening ? stopListening : startListening}>
+                {langListening ? '⏹ Stop Listening' : '🎤 Start Speaking'}
+              </button>
+              {langListening && <span className="lang-listening-badge">● Listening...</span>}
+            </div>
+            {langSpoken && (
+              <div className="lang-result">
+                <div className="lang-row">
+                  <span className="lang-row-label">🎯 Target:</span>
+                  <span className="lang-row-text">{langPhrase}</span>
+                </div>
+                <div className="lang-row">
+                  <span className="lang-row-label">🗣️ You said:</span>
+                  <span className="lang-row-text lang-spoken">{langSpoken}</span>
+                </div>
+                <button className="btn-primary" style={{ marginTop:10 }}
+                  onClick={getLangFeedback} disabled={modelPhase !== 'ready' || langLoading}>
+                  {langLoading ? '⟳ Analyzing...' : '🤖 Get AI Pronunciation Feedback'}
+                </button>
+              </div>
+            )}
+            {(langFeedback || langLoading) && (
+              <div className="note-summary" style={{ marginTop:12 }}>
+                <div className="photo-answer-label">🤖 Pronunciation Feedback</div>
+                {langLoading && !langFeedback && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Analyzing your pronunciation...</span></div>}
+                {langFeedback && <p className="output-text" style={{ fontSize:13 }}>{langFeedback}</p>}
+              </div>
+            )}
+            {modelPhase !== 'ready' && <p className="hint" style={{ marginTop:12 }}>⬆ Load a model first for AI feedback</p>}
+          </section>
+        )}
+
+        {/* ════════════════════════════════════════ TAB: RESEARCH */}
+        {tab === 'research' && (
+          <section className="card">
+            <div className="card-header">
+              <span className="card-icon">🔬</span>
+              <div className="card-title-wrap">
+                <div className="card-title">Research Assistant</div>
+                <div className="card-sub">Analyze documents locally · Zero uploads · AI-powered Q&A</div>
+              </div>
+            </div>
+            <input ref={researchFileRef} type="file" accept=".txt,.md,.csv,.json,.js,.py,.html,.css,.ts" style={{ display:'none' }} onChange={loadResearchDoc} />
+            {!researchDoc ? (
+              <div className="photo-zone" style={{ cursor:'pointer' }} onClick={() => researchFileRef.current?.click()}>
+                <div className="photo-zone-icon">📄</div>
+                <div className="photo-zone-text">Click to load a document for analysis</div>
+                <p className="photo-hint">Supports: TXT, MD, CSV, JSON, JS, TS, PY, HTML, CSS · Processed locally</p>
+              </div>
+            ) : (
+              <div className="research-workspace">
+                <div className="research-doc-bar">
+                  <span>📄 <strong>{researchFileName}</strong></span>
+                  <span style={{ fontSize:11, color:'var(--muted)' }}>{researchDoc.length.toLocaleString()} chars loaded</span>
+                  <button className="btn-ghost btn-xs" onClick={() => { setResearchDoc(''); setResearchFileName(''); setResearchAnswer('') }}>✕ Remove</button>
+                </div>
+                <div className="research-quick-actions">
+                  {[
+                    { key:'summarize', label:'📋 Summarize' },
+                    { key:'keypoints', label:'🔑 Key Points' },
+                    { key:'arguments', label:'⚖️ Arguments' },
+                  ].map(a => (
+                    <button key={a.key} className="btn-ghost" style={{ flex:1 }}
+                      onClick={() => askResearch(a.key)} disabled={modelPhase !== 'ready' || researchLoading}>
+                      {researchLoading ? '⟳' : a.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea className="textarea" style={{ minHeight:70 }}
+                  value={researchQ} onChange={e => setResearchQ(e.target.value)}
+                  disabled={modelPhase !== 'ready'}
+                  placeholder="Ask a specific question about this document..."
+                />
+                <button className="btn-primary" style={{ marginTop:8 }}
+                  onClick={() => askResearch('qa')} disabled={modelPhase !== 'ready' || !researchQ.trim() || researchLoading}>
+                  {researchLoading ? '⟳ Analyzing...' : '🔍 Ask AI About Document'}
+                </button>
+                {(researchAnswer || researchLoading) && (
+                  <div className="note-summary" style={{ marginTop:12 }}>
+                    <div className="photo-answer-label">🤖 AI Analysis</div>
+                    {researchLoading && !researchAnswer && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Analyzing document...</span></div>}
+                    {researchAnswer && <p className="output-text" style={{ fontSize:13, whiteSpace:'pre-wrap' }}>{researchAnswer}</p>}
+                  </div>
+                )}
+              </div>
+            )}
+            {modelPhase !== 'ready' && <p className="hint" style={{ marginTop:12 }}>⬆ Load a model first to enable analysis</p>}
+          </section>
+        )}
+
+        {/* ════════════════════════════════════════ TAB: CODE DOCS */}
+        {tab === 'codedoc' && (
+          <section className="card">
+            <div className="card-header">
+              <span className="card-icon">💻</span>
+              <div className="card-title-wrap">
+                <div className="card-title">Code Documentation Generator</div>
+                <div className="card-sub">Explain, document & analyze code with on-device AI · Zero uploads</div>
+              </div>
+            </div>
+            <div className="codedoc-lang-row">
+              {['javascript','python','typescript','java','cpp','rust','go'].map(l => (
+                <button key={l} className={`lang-chip ${codeLang === l ? 'lang-chip--active' : ''}`} onClick={() => setCodeLang(l)}>{l}</button>
+              ))}
+            </div>
+            <textarea className="textarea code-textarea"
+              value={codeInput} onChange={e => setCodeInput(e.target.value)}
+              disabled={modelPhase !== 'ready'}
+              placeholder={`Paste your ${codeLang} code here...\n\nExample:\nfunction fibonacci(n) {\n  if (n <= 1) return n;\n  return fibonacci(n-1) + fibonacci(n-2);\n}`}
+              style={{ fontFamily:"'Fira Code','Cascadia Code',monospace", fontSize:13, minHeight:180 }}
+            />
+            <div className="codedoc-actions">
+              {Object.entries(CODE_ACTIONS).map(([k, a]) => (
+                <button key={k} className={`action-btn ${codeAction === k && codeLoading ? 'action-btn--active' : ''}`}
+                  style={{ '--color':'#3b82f6' }} onClick={() => runCodeAction(k)}
+                  disabled={modelPhase !== 'ready' || !codeInput.trim() || codeLoading}>
+                  <span className="action-icon">{a.icon}</span>
+                  <span className="action-name">{a.label}</span>
+                </button>
+              ))}
+            </div>
+            {(codeOutput || codeLoading) && (
+              <div className="codedoc-output">
+                {codeAction && (
+                  <div className="drafter-output-header">
+                    <span className="output-tag" style={{ background:'#3b82f620', color:'#3b82f6' }}>
+                      {CODE_ACTIONS[codeAction]?.icon} {CODE_ACTIONS[codeAction]?.label}
+                    </span>
+                    {codeOutput && !codeLoading && (
+                      <button className="btn-ghost" onClick={() => { navigator.clipboard.writeText(codeOutput); setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000) }}>
+                        {codeCopied ? '✓ Copied!' : '📋 Copy'}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {codeLoading && !codeOutput && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Analyzing code...</span></div>}
+                {codeOutput && <pre className="codedoc-pre">{codeOutput}</pre>}
+              </div>
+            )}
+            {modelPhase !== 'ready' && <p className="hint" style={{ marginTop:10 }}>⬆ Load a model first</p>}
+          </section>
+        )}
+
+        {/* ════════════════════════════════════════ TAB: MEETING */}
+        {tab === 'meeting' && (
+          <section className="card">
+            <div className="card-header">
+              <span className="card-icon">🎤</span>
+              <div className="card-title-wrap">
+                <div className="card-title">Meeting Transcription</div>
+                <div className="card-sub">Local speech-to-text · Real-time transcript · AI summaries · Nothing leaves device</div>
+              </div>
+            </div>
+            <div className="meeting-controls">
+              <button className={`meeting-btn ${meetingRecording ? 'meeting-btn--stop' : 'meeting-btn--start'}`}
+                onClick={meetingRecording ? stopMeeting : startMeeting}>
+                {meetingRecording ? '⏹ Stop Recording' : '🎤 Start Recording'}
+              </button>
+              {meetingTranscript && (
+                <button className="btn-ghost" onClick={() => { setMeetingTranscript(''); meetingTranscriptRef.current = ''; setMeetingSummary('') }}>
+                  🗑 Clear
+                </button>
+              )}
+              {meetingRecording && <span className="lang-listening-badge">● Recording live...</span>}
+            </div>
+            <div className="meeting-transcript">
+              {!meetingTranscript && !meetingRecording
+                ? <p className="output-empty">Your meeting transcript will appear here as you speak...</p>
+                : <p className="output-text" style={{ whiteSpace:'pre-wrap', fontSize:13 }}>{meetingTranscript}{meetingRecording && <span className="blink-cursor" />}</p>
+              }
+            </div>
+            {meetingTranscript && (
+              <div className="meeting-ai-actions">
+                <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>⚡ AI Actions</div>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {[
+                    { key:'summary',   label:'📋 Meeting Summary' },
+                    { key:'actions',   label:'✅ Action Items' },
+                    { key:'decisions', label:'🏛️ Key Decisions' },
+                  ].map(a => (
+                    <button key={a.key} className="btn-ghost" style={{ flex:1 }}
+                      onClick={() => runMeetingAction(a.key)} disabled={modelPhase !== 'ready' || meetingLoading}>
+                      {meetingLoading && meetingAction === a.key ? '⟳ Working...' : a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(meetingSummary || meetingLoading) && (
+              <div className="note-summary" style={{ marginTop:12 }}>
+                <div className="photo-answer-label">
+                  {meetingAction === 'summary' ? '📋 Meeting Summary' : meetingAction === 'actions' ? '✅ Action Items' : '🏛️ Key Decisions'}
+                </div>
+                {meetingLoading && !meetingSummary && <div className="dots-wrap"><div className="dots"><span/><span/><span/></div><span>Analyzing transcript...</span></div>}
+                {meetingSummary && <p className="output-text" style={{ fontSize:13, whiteSpace:'pre-wrap' }}>{meetingSummary}</p>}
+              </div>
+            )}
+            {modelPhase !== 'ready' && <p className="hint" style={{ marginTop:12 }}>⬆ Load a model first for AI analysis</p>}
+          </section>
+        )}
+
         {/* ════════════════════════════════════════ PRESENTATION NOTES */}
         <section className="card info-card">
           <details>
@@ -706,11 +1269,7 @@ export default function App() {
 
       </main>
 
-      <footer className="footer">
-        <span>Built with RunAnywhere Web SDK · llama.cpp WASM · React + Vite</span>
-        <span>·</span>
-        <span>100% local · Zero backend · Zero API key</span>
-      </footer>
+      </div>{/* /content-wrap */}
     </div>
   )
 }
